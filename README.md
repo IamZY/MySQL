@@ -251,3 +251,43 @@ EXPLAIN select * from employees;
 
   ![image-20200212203633868](images/image-20200212203633868.png)
 
+#### Case
+
+![image-20200213192659775](images/image-20200213192659775.png)
+
+### 索引优化
+
+### 索引失效
+
+![image-20200213200556089](images/image-20200213200556089.png)
+
+#### 最佳左前列
+
+```sql
+create index idx_employee_nameAgePos on employee(name,age,pos);
+
+# 但是使用的时候必须name必须索引 并且 name age pos 不能跳过age
+```
+
+
+
+![image-20200213201057471](images/image-20200213201057471.png)
+
+#### 存储引擎不能使用索引中范围条件右边的列
+
+> age > 11依然会使用索引 但是 后面pos=‘manager 不会使用索引’
+
+![image-20200213202559608](images/image-20200213202559608.png)
+
+![image-20200213205007403](images/image-20200213205007403.png)
+
+like KK%相当于=常量     %KK和%KK% 相当于范围
+
+![image-20200213205035622](images/image-20200213205035622.png)
+
+
+
+![image-20200213211301463](images/image-20200213211301463.png)
+
+
+
