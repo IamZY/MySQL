@@ -289,5 +289,262 @@ like KK%相当于=常量     %KK和%KK% 相当于范围
 
 ![image-20200213211301463](images/image-20200213211301463.png)
 
+## 查询截取分析
 
++ 观察至少跑一天
++ 开启慢查询日志，设置阈值，如果超过5秒的就是慢SQL，并将它抓取出来
++ explain+慢SQL分析
++ show profile
++ 运维经理 or DBA，进行SQL数据库路服务器参数调优
 
+### 查询优化
+
+#### 小表驱动大表
+
+![image-20200214135936226](images/image-20200214135936226.png)
+
+![image-20200214140241297](images/image-20200214140241297.png)
+
+![image-20200214140248743](images/image-20200214140248743.png)
+
+```sql
+select * from employees e WHERE EXISTS (select 1 from departments d where e.department_id = d.department_id)
+```
+
+#### Order by 关键字优化
+
++ ORDER BY子句，尽量使用Index方式排序，避免使用FileSort方式排序
+
+  + MySQL支持二种方式的排序，FileSort和Index,Index效率高。它指MySQL扫描索引本身完成排序。FileSort方式效率较低。
+
+  + ORDER BY满足两情况，会使用Index方式排序
+
+    + ORDER BY语句使用索引最左前列
+
+    + 使用where子句与OrderBy子句条件列组合满足索引最左前列
+
+      ```sql
+      -- salary排在前面
+      create index idx_emp_nameSalary on employees(salary,first_name,last_name);
+      
+      -- using index
+      explain select first_name,last_name,salary from employees where salary> 5000 order by salary
+      
+      
+      -- salary排在后面 但是order by salary
+      create index idx_emp_nameSalary on employees(first_name,last_name，salary);
+      
+      -- using filesort
+      explain select first_name,last_name,salary from employees where salary> 5000 order by salary
+      ```
+
++ 尽可能在索引列上完成排序操作，遵照索引建的最佳左前缀
++ 如果不在索引列上，filesort有两种算法：mysql就要启动双路排序和单路排序
+  + 双路排序
+    + MySQL4.1之前是使用双路排序，字面意思是两次扫描磁盘，最终得到数据。读取行指针和orderby列，对他们进行排序，然后扫描已经排序好的列表，按照列表中的值重新从列表中读取对应的数据传输
+    + 从磁盘取排序字段，在buffer进行排序，再从磁盘取其他字段。
+  + 取一批数据，要对磁盘进行两次扫描，众所周知，I\O是很耗时的，所以在mysql4.1之后，出现了第二张改进的算法，就是单路排序。
+  + 单路排序
+    + 从磁盘读取查询需要的所有列，按照orderby列在buffer对它们进行排序，然后扫描排序后的列表进行输出，它的效率更快一些，避免了第二次读取数据，并且把随机IO变成顺序IO，但是它会使用更多的空间，因为它把每一行都保存在内存中了。
+  + 结论及引申出的问题
+    + 由于单路是后出来的，总体而言好过双路
+    + 但是用单路有问题
+
++ 优化策略
+
+  + 增大sort_buffer_size参数的设置
+  + 增大max_length_for_sort_data参数的设置
+
+  ![image-20200214142840604](images/image-20200214142840604.png)
+
++ 总结
+
+  ![image-20200214143035790](images/image-20200214143035790.png)
+
+#### Group by 关键字优化
+
++ groupby实质是先排序后进行分组，遵照索引建的最佳左前缀
++ 当无法使用索引列，增大max_length_for_sort_data参数的设置+增大sort_buffer_size参数的设置
++ where高于having,能写在where限定的条件就不要去having限定了。
+
+### 慢查询日志
+
+![image-20200214143544556](images/image-20200214143544556.png)
+
+![image-20200214143644859](images/image-20200214143644859.png)
+
++ 查看是否开启及如何开启
+
+  ```sql
+  -- 默认
+  SHOW VARIABLES LIKE '%slow_query_log%'
+  -- 开启
+  set global slow_query_log = 1
+  ```
+
+  ![image-20200214143917192](images/image-20200214143917192.png)
+
+  
+
++ 查看当前多少秒算慢
+
+  > SHOW VARIABLES LIKE 'long_query_time%';
+
++ 设置慢的阙值时间
+
+  > set global long_query_time=3;
+
++ 为什么设置后看不出变化？
+
+  > 需要重新连接或者新开一个回话才能看到修改值。
+  > SHOW VARIABLES LIKE 'long_query_time%';
+  >
+  > show global variables like 'long_query_time';
+
++ 记录慢SQL并后续分析
+
++ 查询当前系统中有多少条慢查询记录
+
+#### 日志分析工具mysqldumpshow
+
+> mysqldumpshow --help
+
+![image-20200214145912731](images/image-20200214145912731.png)
+
+![image-20200214145957082](images/image-20200214145957082.png)
+
+### 批量插入数据
+
++ 建表
+
++ 设置参数log_trust_function_createors
+
++ 创建函数保证每条数据都不同
+
+  + 随机产生字符串
+
+    ```sql
+    delimiter $$
+    create FUNCTION rand_string(n INT) RETURNs VARCHAR(255)
+    BEGIN
+    	DECLARE chars_str VARCHAR(100) DEFAULT 'abcdefghijklmnopqrstuvwxyz';
+    	DECLARE return_str VARCHAR(255) DEFAULT '';
+    	DECLARE i INT DEFAULT 0;
+    	WHILE i < n DO
+    	SET return_str = CONCAT(return_str,SUBSTRING(chars_str,FLOOR(1 + RAND() * 52),1));
+    	SET i = i + 1;
+    	end WHILE;
+    	return return_str;
+    END $$
+    ```
+
+  + 随机产生部门编号
+
+    ```sql
+    delimiter $$
+    create FUNCTION rand_sum()
+    returns INT(5)
+    BEGIN
+    	DECLARE i INT DEFAULT 0;
+    	SET i = FLOOR(100+RAND()*10);
+    	return i;
+    end $$
+    ```
+
++ 创建存储过程
+
+   ```sql
+  delimiter $$
+  create PROCEDURE insert_emp(in start int(10),in max_num int(10))
+  BEGIN
+  DECLARE i int DEFAULT 0
+  	set autocommit = 0;
+  	REPEAT
+  	SET i = i + 1
+  	insert into employees(first_name,last_name) values(rand_string(6),rand_string(10),RAND() * 10000);
+  	UNTIL i = max_num
+  	end REPEAT;
+  	COMMIT;
+  end $$
+   ```
+
++ 调用存储过程
+
+  > call insert_emp(100,500000)
+
+### show Profile
+
+是mysql提供可以用来分析当前会话中语句执行的资源消耗情况。可以用于SQL的调优测量
+
+官网：http://dev.mysql.com/doc/refman/5.5/en/show-profile.html
+
+默认情况下，参数处于关闭状态，并保存最近15次的运行结果
+
++ 是否支持
+
+  ![image-20200214170853007](images/image-20200214170853007.png)+ 
+
++ 开启功能，默认是关闭，使用前需要开启
+
++ 运行SQL
+
+  ```sql
+  select * from emp group by id%10 limit 150000
+  select * from emp group by id%20 order by 5
+  ```
+
++ 查看结果
+
+  show profiles;
+
++ 诊断SQL，show profile cpu,block io for query 上一步前面的问题SQL 数字号码；
+
+  ![image-20200214171132376](images\image-20200214171132376.png)
+
+  ![image-20200214171145693](images\image-20200214171145693.png)
+
++ 日常开发需要注意的结论
+
+  + converting HEAP to MyISAM 查询结果太大，内存都不够用了往磁盘上搬了。
+
+  + Creating tmp table 创建临时表
+
+    ![image-20200214172423604](images/image-20200214172423604.png)
+
+    + 拷贝数据到临时表
+    + 用完再删除
+
+  + Copying to tmp table on disk 把内存中临时表复制到磁盘，危险！！！
+
+  + locked
+
+### 全局查询日志
+
++ 配置启用
+
+  ![image-20200214172853345](images/image-20200214172853345.png)
+
++ 编码启用
+
+  ![image-20200214172909877](images/image-20200214172909877.png)
+
++ 永远不要在生产环境开启这个功能
+
+## MySQL锁机制
+
+![image-20200214173304255](images/image-20200214173304255.png)
+
+### 锁的分类
+
+#### 从数据操作的类型（读、写）分
+
++  读锁（共享锁）：针对同一份数据，多个读操作可以同时进行而不会互相影响
++ 写锁（排它锁）：当前写操作没有完成前，它会阻断其他写锁和读锁。
+
+#### 从对数据操作的颗粒度
+
++ 表锁
+
++ 行锁
+
+  
